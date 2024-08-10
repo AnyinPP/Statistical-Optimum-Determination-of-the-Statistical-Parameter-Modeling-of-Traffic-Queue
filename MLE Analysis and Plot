@@ -1,0 +1,40 @@
+# MLE Analysis and Plot
+# Define the negative log-likelihood function
+def neg_log_likelihood(params, arrivals_list, services_list, recording_interval):
+    arrival_rate, service_rate = params
+    if arrival_rate <= 0 or service_rate <= 0:
+        return np.inf  # Ensure rates are positive
+    log_likelihood = 0
+    for arrivals, services in zip(arrivals_list, services_list):
+        log_likelihood += -arrival_rate * recording_interval + arrivals * np.log(arrival_rate * recording_interval)
+        log_likelihood += -service_rate * recording_interval + services * np.log(service_rate * recording_interval)
+    return -log_likelihood  # We minimize the negative log-likelihood
+
+# Initial guesses for the parameters
+initial_guess = [0.4, 0.2]
+
+# Perform the optimization to find MLE
+result = minimize(neg_log_likelihood, initial_guess, args=(arrivals_list, services_list, recording_interval), bounds=((1e-5, None), (1e-5, None)))
+estimated_arrival_rate, estimated_service_rate = result.x
+
+print(f"Estimated Arrival Rate: {estimated_arrival_rate}")
+print(f"Estimated Service Rate: {estimated_service_rate}")
+
+# Predict queue lengths using MLE parameters
+queue_lengths_mle = []
+current_queue_length = 0
+
+for arrivals, services in zip(arrivals_list, services_list):
+    current_queue_length = max(0, current_queue_length + arrivals - np.random.poisson(estimated_service_rate * recording_interval))
+    queue_lengths_mle.append(current_queue_length)
+
+# Plotting the true and MLE estimated queue lengths
+plt.figure(figsize=(12, 6))
+plt.plot(time_points, queue_lengths, label='True Queue Length')
+plt.plot(time_points, queue_lengths_mle, color='red', label='Estimated Queue Length (MLE)', linestyle='--')
+plt.xlabel('Time (seconds)')
+plt.ylabel('Queue Length')
+plt.title('Queue Length: True vs Estimated using MLE')
+plt.legend()
+plt.grid(True)
+plt.show()
