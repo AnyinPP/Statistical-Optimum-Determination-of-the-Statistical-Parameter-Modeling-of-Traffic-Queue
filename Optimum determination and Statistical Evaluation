@@ -1,0 +1,176 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.optimize import minimize
+from sklearn.metrics import mean_absolute_error, r2_score, mean_squared_error
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense
+from tensorflow.keras.optimizers import Adam
+
+# Simulation parameters
+true_arrival_rate = 0.5
+true_service_rate = 0.3
+simulation_duration = 1000
+recording_interval = 1
+
+# Simulate the queueing process
+np.random.seed(42)
+time_points = np.arange(0, simulation_duration, recording_interval)
+queue_lengths = []
+current_queue_length = 0
+arrivals_list = []
+services_list = []
+
+for t in time_points:
+    arrivals = np.random.poisson(true_arrival_rate * recording_interval)
+    services = np.random.poisson(true_service_rate * recording_interval)
+    current_queue_length = max(0, current_queue_length + arrivals - services)
+    queue_lengths.append(current_queue_length)
+    arrivals_list.append(arrivals)
+    services_list.append(services)
+
+# MLE Estimation
+def neg_log_likelihood(params, arrivals_list, services_list, recording_interval):
+    arrival_rate, service_rate = params
+    if arrival_rate <= 0 or service_rate <= 0:
+        return np.inf
+    log_likelihood = 0
+    for arrivals, services in zip(arrivals_list, services_list):
+        log_likelihood += -arrival_rate * recording_interval + arrivals * np.log(arrival_rate * recording_interval)
+        log_likelihood += -service_rate * recording_interval + services * np.log(service_rate * recording_interval)
+    return -log_likelihood
+
+initial_guess = [0.4, 0.2]
+result = minimize(neg_log_likelihood, initial_guess, args=(arrivals_list, services_list, recording_interval), bounds=((1e-5, None), (1e-5, None)))
+estimated_arrival_rate, estimated_service_rate = result.x
+
+queue_lengths_mle = []
+current_queue_length = 0
+
+for arrivals, services in zip(arrivals_list, services_list):
+    current_queue_length = max(0, current_queue_length + arrivals - np.random.poisson(estimated_service_rate * recording_interval))
+    queue_lengths_mle.append(current_queue_length)
+
+# Bayesian Inference Estimation
+prior_lambda_arrival = 1.0
+prior_lambda_service = 1.0
+
+n_arrivals = np.sum(arrivals_list)
+n_services = np.sum(services_list)
+
+posterior_lambda_arrival = prior_lambda_arrival + n_arrivals
+posterior_lambda_service = prior_lambda_service + n_services
+
+posterior_arrival_rate = n_arrivals / (simulation_duration + 1/prior_lambda_arrival)
+posterior_service_rate = n_services / (simulation_duration + 1/prior_lambda_service)
+
+queue_lengths_bayesian = []
+current_queue_length = 0
+
+for arrivals, services in zip(arrivals_list, services_list):
+    current_queue_length = max(0, current_queue_length + arrivals - np.random.poisson(posterior_service_rate * recording_interval))
+    queue_lengths_bayesian.append(current_queue_length)
+
+
+# Define the PINN model
+def create_pinn_model():
+    model = Sequential([
+        Dense(10, input_dim=1, activation='tanh'),
+        Dense(10, activation='tanh'),
+        Dense(1, activation='linear')
+    ])
+    return model
+
+pinn_model = create_pinn_model()
+
+# Compile the model
+pinn_model.compile(optimizer='adam', loss='mse')
+
+# Prepare the data
+X_train = time_points.reshape(-1, 1)
+y_train = np.array(queue_lengths).reshape(-1, 1)
+
+# Train the PINN
+pinn_model.fit(X_train, y_train, epochs=1000, batch_size=32, verbose=0)
+
+# Predict the queue lengths using the trained PINN
+queue_lengths_pinn = pinn_model.predict(X_train).flatten()
+
+
+# PINN Estimation
+# Prepare the data
+#X = np.array(list(zip(arrivals_list, services_list)))
+#y = np.array(queue_lengths)
+
+
+# Define the PINN model
+#model = Sequential([
+#    Dense(64, activation='relu', input_shape=(2,)),
+#    Dense(64, activation='relu'),
+#    Dense(1, activation='linear')
+#])
+
+#model.compile(optimizer=Adam(learning_rate=0.01), loss='mse')
+
+# Train the model
+#model.fit(X, y, epochs=1000, batch_size=32, verbose=0)
+
+# Predict the queue lengths using the trained PINN model
+#queue_lengths_pinn = model.predict(X).flatten()
+
+
+# Calculate RMSE, MAE, and R-squared for each method
+metrics = {}
+metrics['MLE'] = {
+    'MAE': mean_absolute_error(queue_lengths, queue_lengths_mle),
+    'RMSE': np.sqrt(mean_squared_error(queue_lengths, queue_lengths_mle)),
+    'R2': r2_score(queue_lengths, queue_lengths_mle)
+}
+metrics['Bayesian'] = {
+    'MAE': mean_absolute_error(queue_lengths, queue_lengths_bayesian),
+    'RMSE': np.sqrt(mean_squared_error(queue_lengths, queue_lengths_bayesian)),
+    'R2': r2_score(queue_lengths, queue_lengths_bayesian)
+}
+metrics['PINN'] = {
+    'MAE': mean_absolute_error(queue_lengths, queue_lengths_pinn),
+    'RMSE': np.sqrt(mean_squared_error(queue_lengths, queue_lengths_pinn)),
+    'R2': r2_score(queue_lengths, queue_lengths_pinn)
+}
+
+# Print the calculated metrics
+for method, vals in metrics.items():
+    print(f"{method} - MAE: {vals['MAE']}, RMSE: {vals['RMSE']}, R-squared: {vals['R2']}")
+
+# Plot the comparison of metrics
+metric_names = ['MAE', 'RMSE', 'R2']
+x = np.arange(len(metric_names))
+
+fig, ax = plt.subplots(figsize=(10, 6))
+bar_width = 0.2
+
+rects1 = ax.bar(x - bar_width, [metrics['MLE'][metric] for metric in metric_names], bar_width, label='MLE')
+rects2 = ax.bar(x, [metrics['Bayesian'][metric] for metric in metric_names], bar_width, label='Bayesian')
+rects3 = ax.bar(x + bar_width, [metrics['PINN'][metric] for metric in metric_names], bar_width, label='PINN')
+
+ax.set_xlabel('Metrics')
+ax.set_ylabel('Values')
+ax.set_title('Comparison of MLE, Bayesian Inference, and PINN')
+ax.set_xticks(x)
+ax.set_xticklabels(metric_names)
+ax.legend()
+
+plt.tight_layout()
+plt.show()
+
+
+# Plotting the true and PINN predicted queue lengths
+plt.figure(figsize=(12, 6))
+plt.plot(time_points, queue_lengths, label='True Queue Length')
+plt.plot(time_points, queue_lengths_pinn, label='Estimated Queue Length (PINN)', linestyle='--')
+plt.plot(time_points, queue_lengths_mle, color='red', label='Estimated Queue Length (MLE)', linestyle='--')
+plt.plot(time_points, queue_lengths_bayesian, color='Green', label='Estimated Queue Length (Bayesian)', linestyle='--')
+plt.xlabel('Time (seconds)')
+plt.ylabel('Queue Length')
+plt.title('Queue Length: True vs Estimated using PINN')
+plt.legend()
+plt.grid(True)
+plt.show()
