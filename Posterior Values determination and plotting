@@ -1,0 +1,36 @@
+# Prior parameters (Exponential distribution: lambda)
+prior_lambda_arrival = 1.0
+prior_lambda_service = 1.0
+
+# Posterior parameters
+n_arrivals = np.sum(arrivals_list)
+n_services = np.sum(services_list)
+
+posterior_lambda_arrival = prior_lambda_arrival + n_arrivals
+posterior_lambda_service = prior_lambda_service + n_services
+
+# Calculate posterior means (which are the estimates of the rates)
+posterior_arrival_rate = n_arrivals / (simulation_duration + 1/prior_lambda_arrival)
+posterior_service_rate = n_services / (simulation_duration + 1/prior_lambda_service)
+
+print(f"Posterior Arrival Rate: {posterior_arrival_rate}")
+print(f"Posterior Service Rate: {posterior_service_rate}")
+
+# Predict queue lengths using Bayesian parameters
+queue_lengths_bayesian = []
+current_queue_length = 0
+
+for arrivals, services in zip(arrivals_list, services_list):
+    current_queue_length = max(0, current_queue_length + arrivals - np.random.poisson(posterior_service_rate * recording_interval))
+    queue_lengths_bayesian.append(current_queue_length)
+
+# Plotting the true and Bayesian estimated queue lengths
+plt.figure(figsize=(12, 6))
+plt.plot(time_points, queue_lengths, label='True Queue Length')
+plt.plot(time_points, queue_lengths_bayesian, color='Green', label='Estimated Queue Length (Bayesian)', linestyle='--')
+plt.xlabel('Time (seconds)')
+plt.ylabel('Queue Length')
+plt.title('Queue Length: True vs Estimated using Bayesian Inference')
+plt.legend()
+plt.grid(True)
+plt.show()
